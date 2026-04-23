@@ -1,0 +1,24 @@
+{
+  "name": "codex-subagent",
+  "description": "Use Codex as sub-agents in Claude Code — dispatch protocol, cx-read/cx-write CLI, and config sync",
+  "version": "0.1.0",
+  "author": {
+    "name": "sangmandu"
+  },
+  "commands": [
+    "./commands/subagent.md",
+    "./commands/sync.md",
+    "./commands/setup.md"
+  ],
+  "homepage": "https://github.com/sangmandu/codex-subagent",
+  "repository": "https://github.com/sangmandu/codex-subagent",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "subagent",
+    "claude-code",
+    "sync",
+    "cx-read",
+    "cx-write"
+  ]
+}

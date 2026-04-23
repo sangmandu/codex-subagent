@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# cx-read — codex exec in read-only sandbox, print only the final agent message.
+#
+# Usage:
+#   cx-read "<prompt>"
+#   cx-read -C /path/to/dir "<prompt>"
+#   cx-read --name <handle> "<prompt>"
+#     - New handle: starts a fresh session.
+#     - Existing completed handle: resumes that session to ask a follow-up.
+#     - Running handle: rejected.
+#
+# Auto-prepends a sub-agent guard on NEW sessions. Bypass with CX_NO_GUARD=1.
+# Follow-ups (resume) never re-inject the guard — the original session already has it.
+set -euo pipefail
+
+read -r -d '' GUARD <<'EOF' || true
+[SUB-AGENT] You are a bounded sub-agent. Do exactly what the prompt asks, read only what it requires, and do nothing else. If a tool call fails, report it briefly and stop.
+---
+
+EOF
+
+[ "${CX_NO_GUARD:-0}" = "1" ] && GUARD=''
+
+TIMEOUT_SEC=300
+NAME=""
+CD_ARGS=()
+ARGS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --name) NAME="$2"; shift 2 ;;
+    -C|--cd) CD_ARGS=(-C "$2"); shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]}"
+
+if [ "$#" -lt 1 ]; then
+  echo "cx-read: missing prompt" >&2
+  exit 2
+fi
+
+LAST="${!#}"
+PRE_ARGS=("${@:1:$#-1}")
+
+RESUME_SID=""
+EVENTS=""
+LOG="/tmp/cx-read-$$.log"
+
+if [ -n "$NAME" ]; then
+  DIR="$HOME/.cache/cx/$NAME"
+  if [ -f "$DIR/status" ] && [ "$(cat "$DIR/status")" = "running" ]; then
+    echo "cx-read: handle '$NAME' is still running — in-progress sub-agents cannot be queried" >&2
+    exit 3
+  fi
+  if [ -f "$DIR/session_id" ]; then
+    RESUME_SID="$(cat "$DIR/session_id")"
+  fi
+  mkdir -p "$DIR"
+  EVENTS="$DIR/events.jsonl"
+  LOG="$DIR/stderr.log"
+  : > "$EVENTS"; : > "$LOG"
+  echo "running" > "$DIR/status"
+  date +%s > "$DIR/started_at"
+  printf '%s\n' "$LAST" > "$DIR/prompt.txt"
+fi
+
+if [ -n "$RESUME_SID" ]; then
+  # Follow-up on an existing session: no guard, use `codex exec resume`.
+  CMD=(codex exec resume --json --skip-git-repo-check
+       ${CD_ARGS[@]+"${CD_ARGS[@]}"}
+       "$RESUME_SID" "$LAST")
+else
+  CMD=(codex exec --sandbox read-only --skip-git-repo-check --json
+       ${CD_ARGS[@]+"${CD_ARGS[@]}"} ${PRE_ARGS[@]+"${PRE_ARGS[@]}"}
+       "${GUARD}${LAST}")
+fi
+
+set +e
+if [ -n "$EVENTS" ]; then
+  timeout "${TIMEOUT_SEC}s" "${CMD[@]}" </dev/null 2>"$LOG" | tee "$EVENTS" >/dev/null
+  RC=${PIPESTATUS[0]}
+  OUT="$(cat "$EVENTS")"
+else
+  OUT="$(timeout "${TIMEOUT_SEC}s" "${CMD[@]}" </dev/null 2>"$LOG")"
+  RC=$?
+fi
+set -e
+
+if [ -n "$NAME" ]; then
+  if [ -z "$RESUME_SID" ]; then
+    SID="$(jq -r 'select(.type=="thread.started") | .thread_id // empty' "$EVENTS" 2>/dev/null | head -1)"
+    [ -n "$SID" ] && printf '%s\n' "$SID" > "$DIR/session_id"
+  fi
+  echo "$RC" > "$DIR/status"
+  rm -f "$EVENTS"
+fi
+
+RESULT="$(echo "$OUT" | grep '^{' | jq -rs '[.[] | select(.type=="item.completed" and .item.type=="agent_message")] | last | .item.text // empty' 2>/dev/null)"
+
+if [ -z "$RESULT" ]; then
+  echo "cx-read: no agent_message (exit=$RC, stderr=$LOG)" >&2
+  echo "$OUT" | tail -20 >&2
+  exit 1
+fi
+
+echo "$RESULT"
