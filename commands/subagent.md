@@ -90,14 +90,16 @@ Multiple agents reviewing the same topic from different angles. Each agent needs
 - **Same**: shared context (what's being reviewed, why, key decisions)
 - **Different**: role/angle (pro/neutral/con, or free-form perspectives)
 
+Each agent gets the full context inlined directly — do NOT use shell variables (`SHARED=...` / `$SHARED`). Duplicating a few lines of context is fine; indirection makes prompts fragile and harder to read.
+
+Use `run_in_background: true` on each Bash tool call for true parallel execution. Do NOT use shell `&` — it does not work with Claude Code's Bash tool.
+
 ```bash
-SHARED="We're reviewing a plan to add virtual agent resolution to web_api.
+cx-read --name debate-pro "## Shared Context
+We're reviewing a plan to add virtual agent resolution to web_api.
 Key decision: extend resolve_agent_inner() vs. new fallback layer.
 Plan is at .workflow/plan.md, spec at .workflow/spec.md.
-Core code: apps/web_api/.../agent_execution_service.py (resolve_agent_inner, line 136-190)."
-
-cx-read --name debate-pro "## Shared Context
-$SHARED
+Core code: apps/web_api/.../agent_execution_service.py (resolve_agent_inner, line 136-190).
 
 ## Files to Read
 - .workflow/plan.md
@@ -105,10 +107,13 @@ $SHARED
 - apps/web_api/web_api/apps/rest/services/agent_execution_service.py
 
 ## Your Task
-You are PRO. Defend this plan. Cite codebase precedent and evidence." &
+You are PRO. Defend this plan. Cite codebase precedent and evidence."
 
 cx-read --name debate-con "## Shared Context
-$SHARED
+We're reviewing a plan to add virtual agent resolution to web_api.
+Key decision: extend resolve_agent_inner() vs. new fallback layer.
+Plan is at .workflow/plan.md, spec at .workflow/spec.md.
+Core code: apps/web_api/.../agent_execution_service.py (resolve_agent_inner, line 136-190).
 
 ## Files to Read
 - .workflow/plan.md
@@ -116,7 +121,7 @@ $SHARED
 - apps/web_api/web_api/apps/rest/services/agent_execution_service.py
 
 ## Your Task
-You are CON. Attack this plan. Find fundamental flaws, missed alternatives, over-engineering." &
+You are CON. Attack this plan. Find fundamental flaws, missed alternatives, over-engineering."
 ```
 
 ### Delegated Implementation (1 agent)
